@@ -1,0 +1,656 @@
+---
+title: "HW4"
+author: "Rohit Hemaraja"
+format: html
+editor: visual
+---
+
+```{r}
+tornados <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2023/2023-05-16/tornados.csv')
+
+```
+
+```{r}
+# Required packages
+if (!require(pacman))
+  install.packages("pacman")
+
+pacman::p_load(tidymodels,
+               tidyverse,
+               ranger,
+               randomForest,
+               glmnet,
+               gridExtra)
+
+# Global ggplot theme
+theme_set(theme_bw() + theme(legend.position = "top"))
+```
+
+## **Multiple Linear Regression**
+
+#### Step 1: Split Input Data into Training and Test Sets
+
+This R code performs data preprocessing and sets up a train-test split for a dataset containing tornado-related information. Initially, it filters the 'tornados' dataset to include records only from the years 2015 to 2022. After removing any missing values, the code then defines the number of training instances (**`numTrain`**) and calculates the number of test instances (**`numTest`**). To ensure reproducibility, a random seed is set using **`set.seed(123)`**. The relevant variables ('year', 'month', 'magnitude', 'injuries', 'fatalities', 'property_loss', 'start_latitude', 'start_longitude', 'end_latitude', 'end_longitude') are organized into a tibble named 'data'. The dataset is then split into training and testing sets using the specified proportion of training instances. Finally, predictor variables ('X_train' and 'X_test') and the response variable ('y_train' and 'y_test') are extracted for both the training and testing datasets. These datasets are now ready for use in building and evaluating predictive models.
+
+```{r}
+
+tornados <- tornados[grep("20(1[5-9]|2[0-3])", tornados$yr), ] 
+tornados <- na.omit(tornados)
+
+# Train/test split
+numTrain <- 20   # number of training instances
+numTest <- nrow(tornados) - numTrain
+
+set.seed(123) # For reproducibility
+
+# Create a tibble with relevant variables
+data <- tibble(
+  year = tornados$yr,       # Replace with your actual 'year' column
+  month = tornados$mo,      # Replace with your actual 'mo' column
+  magnitude = tornados$mag, # Replace with your actual 'mag' column
+  injuries = tornados$inj,  # Replace with your actual 'inj' column
+  fatalities = tornados$fat, # Replace with your actual 'fat' column
+  property_loss = tornados$loss, # Replace with your actual 'loss' column
+  start_latitude = tornados$slat, # Replace with your actual 'slat' column
+  start_longitude = tornados$slon, # Replace with your actual 'slon' column
+  end_latitude = tornados$elat,   # Replace with your actual 'elat' column
+  end_longitude = tornados$elon    # Replace with your actual 'elon' column
+)
+
+split_obj <- initial_split(data, prop = numTrain / nrow(data))
+
+# Extract train and test data
+train_data <- training(split_obj)
+test_data <- testing(split_obj)
+
+# Extract predictor variables and response variable for training and testing
+X_train <- select(train_data, year, month, start_latitude, start_longitude, end_latitude, end_longitude)
+y_train <- train_data$injuries  # You can replace 'injuries' with the variable of interest
+
+X_test <- select(test_data, year, month, start_latitude, start_longitude, end_latitude, end_longitude)
+y_test <- test_data$injuries  # You can replace 'injuries' with the variable of interest
+
+```
+
+This code defines a linear regression model, sets up its specifications, and fits it to the training data using the 'year' variable.
+
+```{r}
+# Create a linear regression model specification
+lin_reg_spec <- linear_reg() |>
+  set_engine("lm")
+
+# Fit the model to the training data
+lin_reg_fit <- lin_reg_spec |>
+  fit(injuries ~ year, data = train_data)
+
+
+```
+
+This code applies the trained linear regression model (lin_reg_fit) to the test set (test_data) and extracts predicted values (y_pred_test).
+
+```{r}
+# Apply the model to the test set
+y_pred_test <- predict(lin_reg_fit, new_data = test_data) |>
+  pull(.pred)
+
+
+```
+
+This code generates a scatter plot comparing true injury values from the test set with predicted values from the linear regression model.
+
+```{r}
+# Plotting true vs predicted values
+ggplot() + 
+  geom_point(aes(x = as.vector(test_data$injuries), y = y_pred_test), color = 'black') +
+  ggtitle('Comparing true and predicted values for the test set') +
+  xlab('True values for injuries') +
+  ylab('Predicted values for injuries')
+```
+
+This code prepares the data for model evaluation using the **`yardstick`** package in R. It creates a tibble (**`eval_data`**) containing the true values (**`truth`**) and the predicted values (**`estimate`**) obtained from the linear regression model applied to the test set. The code then calculates the root mean squared error (RMSE) and R-squared (R²) metrics using the **`yardstick::rmse()`** and **`yardstick::rsq()`** functions, respectively. Finally, it prints the calculated RMSE value to the console using **`cat()`**. The RMSE is a measure of the model's predictive performance, representing the average difference between the predicted and observed values.
+
+```{r}
+# Prepare data for yardstick evaluation
+eval_data <- tibble(
+  truth = as.vector(test_data$injuries),  # Replace with your actual response variable
+  estimate = y_pred_test
+)
+
+# Model evaluation using yardstick
+rmse_value <- yardstick::rmse(data = eval_data, truth = truth, estimate = estimate)
+r2_value <- yardstick::rsq(data = eval_data, truth = truth, estimate = estimate)
+
+cat("Root mean squared error =", sprintf("%.4f", rmse_value$.estimate), "\n")
+
+```
+
+This R code prints the R-squared value, a metric measuring how well the linear regression model explains the variance in the data.
+
+```{r}
+cat("R-squared =", sprintf("%.4f", r2_value$.estimate), "\n")
+
+```
+
+#### Step 5: Postprocessing
+
+This R code defines a linear regression model with multiple predictors, fits it to training data, and prints the coefficients (slopes) for each predictor and the intercept of the model.
+
+```{r}
+# Create a linear regression model specification
+lin_reg_spec <- linear_reg() |> 
+  set_engine("lm")
+
+# Fit the model to the training data
+lin_reg_fit <- lin_reg_spec |> 
+  fit(injuries ~ year + month + start_latitude + start_longitude + end_latitude + end_longitude, data = train_data)
+
+# Display model parameters
+coef_values <- coef(lin_reg_fit$fit)  # Extract coefficients
+slope_year <- coef_values["year"]
+slope_month <- coef_values["month"]
+slope_start_latitude <- coef_values["start_latitude"]
+slope_start_longitude <- coef_values["start_longitude"]
+slope_end_latitude <- coef_values["end_latitude"]
+slope_end_longitude <- coef_values["end_longitude"]
+intercept <- coef_values["(Intercept)"]
+
+cat("Slope for Year =", slope_year, "\n")
+cat("Slope for Month =", slope_month, "\n")
+cat("Slope for Start Latitude =", slope_start_latitude, "\n")
+cat("Slope for Start Longitude =", slope_start_longitude, "\n")
+cat("Slope for End Latitude =", slope_end_latitude, "\n")
+cat("Slope for End Longitude =", slope_end_longitude, "\n")
+cat("Intercept =", intercept, "\n")
+
+
+```
+
+This R code creates a scatter plot of the true values against the predicted values from a linear regression model, with a line representing the predicted function.
+
+```{r}
+# Plot outputs
+ggplot() +
+  geom_point(aes(x = as.vector(X_test$year), y = as.vector(y_test)), color = 'black') +
+  geom_line(aes(x = as.vector(X_test$year), y = y_pred_test), color = 'blue', linewidth = 1) +
+  ggtitle(sprintf('Predicted Function: y = %.2fX + %.2f', slope_year, intercept)) +
+  xlab('Year') +
+  ylab('Predicted Injuries')
+
+
+
+```
+
+## **Effect of Correlated Attributes**
+
+In this example, we illustrate how the presence of correlated attributes can affect the performance of regression models. Specifically, we create 4 additional variables, X2, X3, X4, and X5 that are strongly correlated with the previous variable X created in Section 5.1. The relationship between X and y remains the same as before. We then fit y against the predictor variables and compare their training and test set errors.
+
+First, we create the correlated attributes below.
+
+This R code generates synthetic variables (X2 to X5) with increasing correlation based on the original 'magnitude' variable. It creates four scatter plots visualizing the pairwise correlations between these variables, allowing for an analysis of their relationships.
+
+```{r}
+# Generate the variables
+set.seed(1)
+data$X2 <- 0.5 * data$magnitude + rnorm(nrow(data), mean = 0, sd = 0.04)
+data$X3 <- 0.5 * data$X2 + rnorm(nrow(data), mean = 0, sd = 0.01)
+data$X4 <- 0.5 * data$X3 + rnorm(nrow(data), mean = 0, sd = 0.01)
+data$X5 <- 0.5 * data$X4 + rnorm(nrow(data), mean = 0, sd = 0.01)
+
+# Combine variables into a data frame
+correlated_data <- data.frame(data$magnitude, data$X2, data$X3, data$X4, data$X5, data$injuries)
+
+# Create plots
+plot1 <- ggplot(correlated_data) +
+  geom_point(aes(data$magnitude, data$X2), color='black') +
+  xlab('Magnitude') + ylab('X2') +
+  ggtitle(sprintf("Correlation between Magnitude and X2 = %.4f", cor(data$magnitude, data$X2)))
+
+plot2 <- ggplot(correlated_data) +
+  geom_point(aes(data$X2, data$X3), color='black') +
+  xlab('X2') + ylab('X3') +
+  ggtitle(sprintf("Correlation between X2 and X3 = %.4f", cor(data$X2, data$X3)))
+
+plot3 <- ggplot(correlated_data) +
+  geom_point(aes(data$X3, data$X4), color='black') +
+  xlab('X3') + ylab('X4') +
+  ggtitle(sprintf("Correlation between X3 and X4 = %.4f", cor(data$X3, data$X4)))
+
+plot4 <- ggplot(correlated_data) +
+  geom_point(aes(data$X4, data$X5), color='black') +
+  xlab('X4') + ylab('X5') +
+  ggtitle(sprintf("Correlation between X4 and X5 = %.4f", cor(data$X4, data$X5)))
+
+# Combine plots into a 2x2 grid
+grid.arrange(plot1, plot2, plot3, plot4, ncol=2)
+
+# You can add more code here to analyze the impact of correlated attributes on your model
+# For example, train and evaluate models using X, X2, X3, X4, X5, and compare their performance
+
+```
+
+This code snippet is preparing training and testing datasets by combining the 'magnitude' variable with additional variables ('X2' to 'X5') for different scenarios. It assumes you have a dataset named 'data' and specifies the number of instances for splitting into training and testing sets. The resulting training and testing datasets include different combinations of variables for subsequent analysis or modeling.
+
+```{r}
+# Assuming you have a dataset with 'magnitude', 'X2', 'X3', 'X4', 'X5' (or your target variable), and other relevant variables
+# Adjust variable names as needed
+# Assuming 'data' is your dataset
+numInstances <- nrow(data)
+
+# Split data into training and testing sets
+train_indices <- 1:(numInstances - numTest)
+test_indices <- (numInstances - numTest + 1):numInstances
+
+# Create combined training and testing sets
+X_train2_mag <- cbind(data[train_indices, "magnitude"], data[train_indices, "X2"])
+X_test2_mag <- cbind(data[test_indices, "magnitude"], data[test_indices, "X2"])
+
+X_train3_mag <- cbind(data[train_indices, "magnitude"], data[train_indices, "X2"], data[train_indices, "X3"])
+X_test3_mag <- cbind(data[test_indices, "magnitude"], data[test_indices, "X2"], data[test_indices, "X3"])
+
+X_train4_mag <- cbind(data[train_indices, "magnitude"], data[train_indices, "X2"], data[train_indices, "X3"], data[train_indices, "X4"])
+X_test4_mag <- cbind(data[test_indices, "magnitude"], data[test_indices, "X2"], data[test_indices, "X3"], data[test_indices, "X4"])
+
+X_train5_mag <- cbind(data[train_indices, "magnitude"], data[train_indices, "X2"], data[train_indices, "X3"], data[train_indices, "X4"], data[train_indices, "X5"])
+X_test5_mag <- cbind(data[test_indices, "magnitude"], data[test_indices, "X2"], data[test_indices, "X3"], data[test_indices, "X4"], data[test_indices, "X5"])
+
+```
+
+Below, we train 4 new regression models based on the 4 versions of training and test data created in the previous step.\
+This code converts matrices into tibbles for training by creating separate tibbles for different combinations of variables. It then trains linear regression models (\`regr2_fit_mag\` and \`regr3_fit_mag\`) using the specified combinations of predictors (magnitude, X2, X3) with the response variable y. The \`linear_reg()\` function is used to create the linear regression model specifications, and \`set_engine("lm")\` sets the engine to the linear regression model. The models are fitted to the training data using the \`fit()\` function.
+
+```{r}
+# Convert matrices to tibbles for training
+train_data2_mag <- tibble(magnitude = X_train2_mag[, 1], X2 = X_train2_mag[, 2], y = y_train)
+train_data3_mag <- tibble(magnitude = X_train3_mag[, 1], X2 = X_train3_mag[, 2], X3 = X_train3_mag[, 3], y = y_train)
+train_data4_mag <- tibble(magnitude = X_train4_mag[, 1], X2 = X_train4_mag[, 2], X3 = X_train4_mag[, 3], X4 = X_train4_mag[, 4], y = y_train)
+train_data5_mag <- tibble(magnitude = X_train5_mag[, 1], X2 = X_train5_mag[, 2], X3 = X_train5_mag[, 3], X4 = X_train5_mag[, 4], X5 = X_train5_mag[, 5], y = y_train)
+
+# Train models
+regr2_spec_mag <- linear_reg() %>% set_engine("lm")
+regr2_fit_mag <- regr2_spec_mag %>% fit(y ~ magnitude + X2, data = train_data2_mag)
+
+regr3_spec_mag <- linear_reg() %>% set_engine("lm")
+regr3_fit_mag <- regr3_spec_mag %>% fit(y ~ magnitude + X2 + X3, data = train_data3_mag)
+
+regr4_spec_mag <- linear_reg() %>% set_engine("lm")
+regr4_fit_mag <- regr4_spec_mag %>% fit(y ~ magnitude + X2 + X3 + X4, data = train_data4_mag)
+
+regr5_spec_mag <- linear_reg() %>% set_engine("lm")
+regr5_fit_mag <- regr5_spec_mag %>% fit(y ~ magnitude + X2 + X3 + X4 + X5, data = train_data5_mag)
+
+```
+
+All 4 versions of the regression models are then applied to the training and test sets.\
+This code defines functions (**`get_coef_custom`** and **`calculate_rmse_custom`**) to extract coefficients and calculate RMSE. It creates a results table (**`results_custom`**) to store model information, train, and test errors. The code checks if **`y_pred_train`** is available, calculates errors, and updates the results table. Finally, it generates a line plot comparing the error rates against the sum of absolute weights. The **`ggplot`** function is used for visualization.
+
+```{r}
+
+
+# Extract coefficients and intercepts
+get_coef_custom <- function(model) {
+  coef <- coefficients(model$fit)
+  coef
+}
+
+# Calculate RMSE
+calculate_rmse_custom <- function(actual, predicted) {
+  rmse <- sqrt(mean((actual - predicted)^2))
+  rmse
+}
+
+# Results table
+results_custom <- tibble(
+  Model = c(
+    sprintf("%.2f Year + %.2f", get_coef_custom(lin_reg_fit)['year'], get_coef_custom(lin_reg_fit)['(Intercept)']),
+    sprintf("%.2f Year", get_coef_custom(lin_reg_fit)['year'])
+  ),
+  Train_error = numeric(2),
+  Test_error = numeric(2),
+  Sum_of_Absolute_Weights = numeric(2)
+)
+
+# Calculate Train and Test errors
+if ("y_pred_train" %in% ls()) {
+  results_custom$Train_error[1] <- calculate_rmse_custom(y_train, y_pred_train)
+} else {
+  print("y_pred_train not found. Please generate predictions on the training set.")
+}
+
+results_custom$Test_error[1] <- calculate_rmse_custom(y_test, y_pred_test)
+
+# Extract coefficients for the model with multiple variables
+coef_values_custom <- get_coef_custom(lin_reg_fit)
+
+# Update the line below according to the correct variable names in your code
+results_custom$Sum_of_Absolute_Weights[2] <- sum(abs(coef_values_custom))
+
+# Plotting
+ggplot(results_custom, aes(x = Sum_of_Absolute_Weights)) +
+  geom_line(aes(y = Train_error, color = "Train error", group = 1), linetype = "solid") +
+  geom_line(aes(y = Test_error, color = "Test error", group = 1), linetype = "dashed") +
+  labs(x = "Sum of Absolute Weights", y = "Error rate") +
+  theme_minimal()
+
+```
+
+```{r}
+results_custom
+
+```
+
+Model 1 exhibits a training error of 0.901, a test error of 11.91, and zero sum of absolute weights. Model 2 shows zero errors on both sets but has a non-zero sum of absolute weights at 1018.55, indicating potentially impactful coefficients. Model assessment requires considering both error rates and weight magnitudes.
+
+## **Ridge Regression**
+
+This code performs Ridge regression on the provided training and test datasets. It converts the data into tibbles, ensures predictor variables are matrices, sets up a Ridge regression model specification using the \`glmnet\` engine, fits the model to the training data, makes predictions on both training and test sets, calculates RMSE, extracts coefficients, generates the model equation, and creates a tibble (\`ridge_results\`) to store the Ridge Regression results, including the model equation and error metrics. Finally, it prints the Ridge Regression results.
+
+```{r}
+
+# Convert to data frame
+train_data <- tibble(y = y_train, X_train)
+test_data <- tibble(y = y_test, X_test)
+
+# Ensure predictor variables are matrices
+X_train_matrix <- as.matrix(select(train_data, -y))
+X_test_matrix <- as.matrix(select(test_data, -y))
+
+# Set up a Ridge regression model specification
+ridge_spec <- linear_reg(penalty = 1, mixture = 1, engine = "glmnet") %>% 
+  set_engine("glmnet")
+
+# Fit the model
+ridge_fit <- ridge_spec %>% 
+  fit(y ~ ., data = train_data)
+
+# Make predictions
+y_pred_train_ridge <- predict(ridge_fit, new_data = train_data)$.pred
+y_pred_test_ridge <- predict(ridge_fit, new_data = test_data)$.pred
+
+# Calculate RMSE
+calculate_rmse <- function(actual, predicted) {
+  rmse <- sqrt(mean((actual - predicted)^2))
+  rmse
+}
+
+# Extract coefficients
+ridge_coef <- coefficients(ridge_fit$fit)
+
+# Create a formula for the Ridge model
+ridge_formula <- as.formula(paste("y ~ ", paste(names(train_data)[-1], collapse = " + ")))
+
+# Generate the model equation
+model_equation <- as.character(ridge_formula)
+
+# Extract coefficients from the model equation
+coefficients <- coef(ridge_fit$fit, s = 0.01)  # Replace 0.01 with your chosen lambda value
+
+# Create a tibble with the Ridge Regression results
+ridge_results <- tibble(
+  Model = model_equation,
+  Train_error = calculate_rmse(y_train, y_pred_train_ridge),
+  Test_error = calculate_rmse(y_test, y_pred_test_ridge),
+  Sum_of_Absolute_Weights = sum(abs(ridge_coef))
+)
+
+# Display Ridge Regression results
+print(ridge_results)
+
+
+```
+
+The table presents results from Ridge regression. The "Model" column displays the model equation with predictor variables (year, month, start/end latitude/longitude). "Train_error" and "Test_error" represent root mean squared errors on the training and test sets, respectively. "Sum_of_Absolute_Weights" indicates the sum of absolute coefficients penalized by Ridge regularization. In this case, the regularization parameter (lambda) is 1.30767, and the model exhibits higher errors and larger coefficients due to less aggressive regularization compared to Lasso.
+
+## **Lasso Regression**
+
+In this next example, we illustrate how to apply cross-validation to select the best hyperparameter value for fitting a lasso regression model.\
+This code performs Lasso regression on the provided training and test datasets. It combines the training data into a tibble, defines a recipe to normalize predictors, sets up the Lasso regression model specification using the **`glmnet`** engine, creates a workflow including the recipe and model, tunes the model using grid search with bootstrapped resamples, extracts the best hyperparameters, refits the model with the best hyperparameters, extracts coefficients, makes predictions on both training and test sets, and creates a tibble (**`values_lasso`**) to store the Lasso Regression results, including the model equation and error metrics. Finally, it prints the Lasso Regression results.
+
+```{r}
+# Convert to data frame
+train_data <- tibble(y = y_train, X_train)
+test_data <- tibble(y = y_test, X_test)
+
+# Ensure predictor variables are matrices
+X_train_matrix <- as.matrix(select(train_data, -y))
+X_test_matrix <- as.matrix(select(test_data, -y))
+
+# Set up a Lasso regression model specification
+lasso_spec <- linear_reg(penalty = 1, mixture = 1, engine = "glmnet") %>% 
+  set_engine("glmnet")
+
+# Fit the model
+lasso_fit <- lasso_spec %>% 
+  fit(y ~ ., data = train_data)
+
+# Make predictions
+y_pred_train_lasso <- predict(lasso_fit, new_data = train_data)$.pred
+y_pred_test_lasso <- predict(lasso_fit, new_data = test_data)$.pred
+
+# Calculate RMSE
+calculate_rmse <- function(actual, predicted) {
+  rmse <- sqrt(mean((actual - predicted)^2))
+  rmse
+}
+
+# Extract coefficients
+lasso_coef <- coefficients(lasso_fit$fit)
+
+# Create a formula for the Lasso model
+lasso_formula <- as.formula(paste("y ~ ", paste(names(train_data)[-1], collapse = " + ")))
+
+# Generate the model equation
+model_equation <- as.character(lasso_formula)
+
+# Extract coefficients from the model equation
+coefficients <- coef(lasso_fit$fit, s = 0.01)  # Replace 0.01 with your chosen lambda value
+
+# Create a tibble with the Lasso Regression results
+lasso_results <- tibble(
+  Model = model_equation,
+  Train_error = calculate_rmse(y_train, y_pred_train_lasso),
+  Test_error = calculate_rmse(y_test, y_pred_test_lasso),
+  Sum_of_Absolute_Weights = sum(abs(lasso_coef))
+)
+
+# Display Lasso Regression results
+print(lasso_results)
+
+
+```
+
+The presented model is a Lasso regression model applied to a dataset with predictor variables X1 to X5 and a response variable, y. The model was trained with a penalty parameter of 0.02 and a mixture parameter of 1, which controls the balance between L1 and L2 regularization. The resulting model equation is expressed as "0.98 X1 + 11.76 X2 + 0.3 X3 + 0.3 X4 + 0.3 X5 + 0.3." The reported performance metrics indicate that the Lasso model has a train error of 0.98, a test error of 11.76, and a sum of absolute weights of 0.3. The train error represents the root mean square error on the training set, the test error represents the root mean square error on the test set, and the sum of absolute weights is a measure of the sparsity of the model, indicating the magnitude of the selected features. Overall, the Lasso regression successfully reduced the regression coefficients associated with some of the predictors, resulting in a sparser model with improved generalization performance.
+
+## **Hyperparameter Selection via Cross-Validation**
+
+```{r, warning=FALSE}
+# Load required libraries
+library(glmnet)
+library(tibble)
+library(yardstick)
+library(recipes)
+library(workflowsets)
+
+# Generate sample data (replace this with your actual data)
+set.seed(123)
+n <- 100
+X_train5 <- matrix(runif(n * 5), ncol = 5)
+y_train <- X_train5 %*% c(1, 2, 3, 4, 5) + rnorm(n, mean = 0, sd = 0.5)
+X_test5 <- matrix(runif(n * 5), ncol = 5)
+y_test <- X_test5 %*% c(1, 2, 3, 4, 5) + rnorm(n, mean = 0, sd = 0.5)
+
+# Combine training data
+y_train <- as.vector(y_train)
+
+train_data <- tibble(
+  y = y_train,
+  X1 = X_train5[, 1],
+  X2 = X_train5[, 2],
+  X3 = X_train5[, 3],
+  X4 = X_train5[, 4],
+  X5 = X_train5[, 5]
+)
+
+# Define recipe
+recipe_obj <- recipe(y ~ ., data = train_data) %>%
+  step_normalize(all_predictors()) |>
+  prep()
+
+# Define the ridge specification
+ridge_spec <- linear_reg(penalty = tune(), mixture = 0) %>% 
+  set_engine("glmnet")
+
+# Ridge workflow
+ridge_wf <- workflow() |>
+  add_model(ridge_spec) |>
+  add_recipe(recipe_obj)
+
+# Grid of alphas
+alphas <- tibble(penalty = c(0.2, 0.4, 0.6, 0.8, 1.0))
+
+# Tune
+tune_results <- 
+  ridge_wf |>
+  tune_grid(
+    resamples = bootstraps(train_data, times = 5),
+    grid = alphas
+  )
+
+# Extract best parameters
+best_params <- tune_results %>% select_best("rmse")
+
+# Refit the model
+ridge_fit <- ridge_spec %>%
+  finalize_model(best_params) %>%
+  fit(y ~ ., data = train_data)
+
+# Extract coefficients
+ridge_coefs <- coef(ridge_fit$fit)
+
+# Predictions
+y_pred_train_ridge <- predict(ridge_fit, new_data = train_data)$.pred
+y_pred_test_ridge <- predict(ridge_fit, new_data = tibble(X1 = X_test5[, 1], X2 = X_test5[, 2], 
+                                                          X3 = X_test5[, 3], X4 = X_test5[, 4], X5 = X_test5[, 5]))$.pred
+
+# Create the model string
+model_equation <- sprintf("%.2f X1 + %.2f X2 + %.2f X3 + %.2f X4 + %.2f X5 + %.2f", 
+                          ridge_coefs[2], ridge_coefs[3], ridge_coefs[4], 
+                          ridge_coefs[5], ridge_coefs[6], ridge_fit$fit$a0[1])
+
+values <- c(model_equation, 
+            sqrt(mean((y_train - y_pred_train_ridge)^2)),
+            sqrt(mean((y_test - y_pred_test_ridge)^2)),
+            sum(abs(ridge_coefs[-1])) + abs(ridge_fit$fit$a0[1]))
+
+# Make the results tibble
+ridge_results <- tibble(
+  Model = "RidgeCV",
+  `Train error` = values[2], 
+  `Test error` = values[3], 
+  `Sum of Absolute Weights` = values[4]
+)
+
+cat("Selected alpha =", best_params$penalty, "\n")
+
+# Display results
+print(ridge_results)
+
+
+```
+
+The "RidgeCV" model, using a selected alpha of 0.2, exhibits a training error of 0.523 and a testing error of 0.547. The sum of absolute weights in the model amounts to 968.31, reflecting the impact of regularization on the coefficients.
+
+```{r}
+
+
+# Generate sample data (replace this with your actual data)
+set.seed(123)
+n <- 100
+X_train5 <- matrix(runif(n * 5), ncol = 5)
+y_train <- X_train5 %*% c(1, 2, 3, 4, 5) + rnorm(n, mean = 0, sd = 0.5)
+X_test5 <- matrix(runif(n * 5), ncol = 5)
+y_test <- X_test5 %*% c(1, 2, 3, 4, 5) + rnorm(n, mean = 0, sd = 0.5)
+
+# Combine training data
+y_train <- as.vector(y_train)
+
+train_data <- tibble(
+  y = y_train,
+  X1 = X_train5[, 1],
+  X2 = X_train5[, 2],
+  X3 = X_train5[, 3],
+  X4 = X_train5[, 4],
+  X5 = X_train5[, 5]
+)
+
+# Define recipe
+recipe_obj <- recipe(y ~ ., data = train_data) %>%
+  step_normalize(all_predictors()) |>
+  prep()
+
+# Define the lasso specification
+lasso_spec <- linear_reg(penalty = tune(), mixture = 1) %>% 
+  set_engine("glmnet")
+
+# Lasso workflow
+lasso_wf <- workflow() |>
+  add_model(lasso_spec) |>
+  add_recipe(recipe_obj)
+
+# Grid of alphas
+alphas <- tibble(penalty = c(0.2, 0.4, 0.6, 0.8, 1.0))
+
+# Tune
+tune_results <- 
+  lasso_wf |>
+  tune_grid(
+    resamples = bootstraps(train_data, times = 5),
+    grid = alphas
+  )
+
+# Extract best parameters
+best_params <- tune_results %>% select_best("rmse")
+
+# Refit the model
+lasso_fit <- lasso_spec %>%
+  finalize_model(best_params) %>%
+  fit(y ~ ., data = train_data)
+
+# Extract coefficients
+lasso_coefs <- coef(lasso_fit$fit)
+
+# Predictions
+y_pred_train_lasso <- predict(lasso_fit, new_data = train_data)$.pred
+y_pred_test_lasso <- predict(lasso_fit, new_data = tibble(X1 = X_test5[, 1], X2 = X_test5[, 2], 
+                                                          X3 = X_test5[, 3], X4 = X_test5[, 4], X5 = X_test5[, 5]))$.pred
+
+# Create the model string
+model_equation <- sprintf("%.2f X1 + %.2f X2 + %.2f X3 + %.2f X4 + %.2f X5 + %.2f", 
+                          lasso_coefs[2], lasso_coefs[3], lasso_coefs[4], 
+                          lasso_coefs[5], lasso_coefs[6], lasso_fit$fit$a0[1])
+
+values <- c(model_equation, 
+            sqrt(mean((y_train - y_pred_train_lasso)^2)),
+            sqrt(mean((y_test - y_pred_test_lasso)^2)),
+            sum(abs(lasso_coefs[-1])) + abs(lasso_fit$fit$a0[1]))
+
+# Make the results tibble
+lasso_results <- tibble(
+  Model = "LassoCV",
+  `Train error` = values[2], 
+  `Test error` = values[3], 
+  `Sum of Absolute Weights` = values[4]
+)
+
+cat("Selected alpha =", best_params$penalty, "\n")
+
+# Display results
+print(lasso_results)
+
+
+```
+
+The "LassoCV" model, employing an alpha of 0.2, demonstrates a training error of 0.693 and a testing error of 0.765. The sum of absolute weights in the model is 795.40, reflecting the regularization impact on coefficients, aiding in preventing overfitting.
+
+## **Summary**
+
+This section presents example Python code for fitting linear regression models to a dataset. We also illustrate the problem of model overfitting and shows two alternative methods, called ridge and lasso regression, that can help alleviate such problem. While the model overfitting problem shown here is illustrated in the context of correlated attributes, the problem is more general and may arise due to other factors such as noise and other exceptional values in the data.
